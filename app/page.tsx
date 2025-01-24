@@ -1,9 +1,17 @@
 "use client"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input" 
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog"
+import { supabase } from "@/lib/supabase"
 
 // Define the structure of a note
 interface Note {
@@ -14,60 +22,94 @@ interface Note {
 }
 
 export default function Home() {
-  // Initial sample notes
-  const initialNotes: Note[] = [
-    {
-      id: 1,
-      title: "The Art of Programming",
-      content: "Programming is both a science and an art form. Like any craft, it requires technical knowledge and precision, but also creativity and intuition. The best programmers are those who can balance these aspects, creating code that is not only functional but also elegant and maintainable.\n\nJust as a writer crafts stories with words, a programmer writes solutions with code. Each line serves a purpose, each function tells a story, and the whole program comes together like chapters in a book. The joy of programming comes from solving complex problems with simple, beautiful solutions.",
-      date: new Date().toLocaleDateString()
-    },
-    {
-      id: 2,
-      title: "Web Development Journey",
-      content: "Starting my journey in web development has been an exciting adventure. From learning HTML and CSS basics to diving into JavaScript and React, each step has opened new possibilities. The web is an incredibly dynamic platform, constantly evolving with new technologies and approaches.\n\nOne of the most fascinating aspects is how different technologies work together. Frontend frameworks like React make building interactive interfaces intuitive, while backend technologies handle data and business logic. Understanding how these pieces fit together is like solving a complex puzzle, where each piece has its own unique role.",
-      date: new Date().toLocaleDateString()
-    },
-    {
-      id: 3,
-      title: "Future of AI in Technology",
-      content: "Artificial Intelligence is revolutionizing the way we approach software development and problem-solving. From automated testing to code generation, AI tools are becoming an integral part of a developer's toolkit. These advancements are not replacing programmers but rather augmenting their capabilities and productivity.\n\nThe future looks even more promising as AI continues to evolve. We're seeing the emergence of systems that can understand context, generate complex code structures, and even debug applications. However, it's crucial to remember that human creativity and critical thinking remain essential in guiding these tools and ensuring they produce meaningful results.",
-      date: new Date().toLocaleDateString()
-    }
-  ];
-
   // State to store notes and form inputs
-  const [notes, setNotes] = useState<Note[]>(initialNotes)
+  const [notes, setNotes] = useState<Note[]>([])
   const [title, setTitle] = useState("")
   const [content, setContent] = useState("")
   const [editingId, setEditingId] = useState<number | null>(null)
+  const [summaryNote, setSummaryNote] = useState<Note | null>(null)
+  const [summary, setSummary] = useState<string>("")
+  const [isLoading, setIsLoading] = useState(false)
+
+  // Fetch notes from Supabase on component mount
+  useEffect(() => {
+    fetchNotes()
+  }, [])
+
+  const fetchNotes = async () => {
+    setIsLoading(true)
+    try {
+      console.log('Attempting to fetch notes...')
+      const { data, error } = await supabase
+        .from('notes')
+        .select('*')
+        .order('created_at', { ascending: false })
+
+      if (error) {
+        console.error('Supabase error:', error)
+        throw error
+      }
+      if (data) {
+        console.log('Successfully fetched notes:', data)
+        setNotes(data)
+      }
+    } catch (error) {
+      console.error('Error fetching notes:', error)
+      console.dir(error)
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   // Function to add or update a note
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (title.trim() === "" || content.trim() === "") return
 
-    if (editingId) {
-      // Update existing note
-      setNotes(notes.map(note => 
-        note.id === editingId 
-          ? { ...note, title, content, date: new Date().toLocaleDateString() }
-          : note
-      ))
-      setEditingId(null)
-    } else {
-      // Add new note
-      const newNote: Note = {
-        id: Date.now(),
-        title,
-        content,
-        date: new Date().toLocaleDateString()
-      }
-      setNotes([...notes, newNote])
-    }
+    try {
+      if (editingId) {
+        // Update existing note
+        const { error } = await supabase
+          .from('notes')
+          .update({
+            title,
+            content,
+            date: new Date().toLocaleDateString()
+          })
+          .eq('id', editingId)
 
-    // Clear the form
-    setTitle("")
-    setContent("")
+        if (error) {
+          console.error('Supabase update error:', error)
+          throw error
+        }
+      } else {
+        // Add new note
+        const newNote = {
+          id: Date.now(),
+          title,
+          content,
+          date: new Date().toLocaleDateString()
+        }
+
+        const { error } = await supabase
+          .from('notes')
+          .insert(newNote)
+
+        if (error) {
+          console.error('Supabase insert error:', error)
+          throw error
+        }
+      }
+
+      // Refresh notes
+      await fetchNotes()
+      
+      // Clear form
+      setTitle("")
+      setContent("")
+      setEditingId(null)
+    } catch (error) {
+      console.error('Error saving note:', error)
+    }
   }
 
   // Function to start editing a note
@@ -78,15 +120,98 @@ export default function Home() {
   }
 
   // Function to delete a note
-  const handleDelete = (id: number) => {
-    setNotes(notes.filter(note => note.id !== id))
+  const handleDelete = async (id: number) => {
+    try {
+      const { error } = await supabase
+        .from('notes')
+        .delete()
+        .eq('id', id)
+
+      if (error) throw error
+      
+      // Refresh notes
+      fetchNotes()
+    } catch (error) {
+      console.error('Error deleting note:', error)
+    }
+  }
+
+  // Add this new function to handle summary generation
+  const handleGenerateSummary = async (note: Note) => {
+    setIsLoading(true)
+    setSummaryNote(note)
+    
+    try {
+      const response = await fetch('/api/summarize', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ content: note.content }),
+      })
+
+      const data = await response.json()
+      
+      if (response.ok) {
+        setSummary(data.summary)
+      } else {
+        throw new Error(data.error || 'Failed to generate summary')
+      }
+    } catch (error) {
+      console.error('Error:', error)
+      setSummary('Failed to generate summary. Please try again.')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // Add this function to close the dialog
+  const handleDialogClose = () => {
+    setSummaryNote(null)
+    setSummary("")
+  }
+
+  // Add this function to test the connection
+  const testSupabaseConnection = async () => {
+    try {
+      console.log('Testing Supabase connection...')
+      const testNote = {
+        id: Date.now(),
+        title: 'Test Note',
+        content: 'This is a test note',
+        date: new Date().toLocaleDateString()
+      }
+
+      const { data, error } = await supabase
+        .from('notes')
+        .insert(testNote)
+        .select()
+
+      if (error) {
+        console.error('Test insert error:', error)
+        throw error
+      }
+
+      console.log('Successfully inserted test note:', data)
+      await fetchNotes()
+    } catch (error) {
+      console.error('Test connection failed:', error)
+    }
   }
 
   return (
     <div className="min-h-screen p-8">
-      {/* Note Input Section */}
       <div className="max-w-2xl mx-auto mb-12 space-y-4">
-        <h1 className="text-2xl font-bold mb-6">My Notes</h1>
+        <div className="flex justify-between items-center">
+          <h1 className="text-2xl font-bold mb-6">My Notes</h1>
+          <Button 
+            onClick={testSupabaseConnection}
+            variant="outline"
+            size="sm"
+          >
+            Test Connection
+          </Button>
+        </div>
         
         <div className="space-y-4">
           <Input
@@ -121,38 +246,77 @@ export default function Home() {
 
       {/* Notes Display Section */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-w-7xl mx-auto">
-        {notes.map((note) => (
-          <Card key={note.id}>
-            <CardHeader>
-              <div className="flex justify-between items-start">
-                <CardTitle>{note.title}</CardTitle>
-                <div className="flex gap-2">
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={() => handleEdit(note)}
-                  >
-                    Edit
-                  </Button>
-                  <Button 
-                    variant="destructive" 
-                    size="sm"
-                    onClick={() => handleDelete(note.id)}
-                  >
-                    Delete
-                  </Button>
+        {isLoading ? (
+          <div className="col-span-full flex justify-center py-12">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+          </div>
+        ) : notes.length === 0 ? (
+          <div className="col-span-full text-center py-12 text-gray-500">
+            No notes yet. Create your first note above!
+          </div>
+        ) : (
+          notes.map((note) => (
+            <Card key={note.id}>
+              <CardHeader>
+                <div className="flex justify-between items-start">
+                  <CardTitle>{note.title}</CardTitle>
+                  <div className="flex gap-2">
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => handleEdit(note)}
+                    >
+                      Edit
+                    </Button>
+                    <Button 
+                      variant="destructive" 
+                      size="sm"
+                      onClick={() => handleDelete(note.id)}
+                    >
+                      Delete
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">
-                {note.date}
-              </p>
-              <p className="whitespace-pre-wrap">{note.content}</p>
-            </CardContent>
-          </Card>
-        ))}
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">
+                  {note.date}
+                </p>
+                <p className="whitespace-pre-wrap mb-4">{note.content}</p>
+                <Button 
+                  variant="secondary" 
+                  size="sm"
+                  onClick={() => handleGenerateSummary(note)}
+                  className="w-full"
+                >
+                  Generate AI Summary
+                </Button>
+              </CardContent>
+            </Card>
+          ))
+        )}
       </div>
+
+      {/* Dialog component */}
+      <Dialog open={summaryNote !== null} onOpenChange={handleDialogClose}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>AI Summary: {summaryNote?.title}</DialogTitle>
+            <DialogDescription className="text-sm text-muted-foreground">
+              AI-generated summary of your note
+            </DialogDescription>
+          </DialogHeader>
+          <div className="mt-4">
+            {isLoading ? (
+              <div className="flex items-center justify-center py-4">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-700 dark:text-gray-300">{summary}</p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
