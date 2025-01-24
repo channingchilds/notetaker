@@ -1,9 +1,7 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
 
-type InputProps = Omit<React.InputHTMLAttributes<HTMLInputElement>, "type"> & {
-  type?: React.InputHTMLAttributes<HTMLInputElement>["type"]
-}
+type InputProps = React.InputHTMLAttributes<HTMLInputElement>
 
 const Input = React.forwardRef<HTMLInputElement, InputProps>(
   ({ className, type, ...props }, ref) => {
